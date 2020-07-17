@@ -1,11 +1,10 @@
-###NBA_SportVU FUNCTIONS
+# A copy of rajshah4's NBA_SportVU _functions.R with some minor adjustments
+# and bug fixes.
 
 library(RCurl)
 library(jsonlite)
 library(dplyr)
 library(sp)
-
-#factorconvert <- function(f){as.numeric(levels(f))[f]}
 
 sportvu_convert_json <- function (file.name)
 {
@@ -90,9 +89,9 @@ travelDist <- function(xloc, yloc){
   (sum(b))
 }
 
-player_dist <- function(data, lastnameA,lastnameB, eventID) {
-  #Functions finds the distance of the player, assumes you have a dataframe all.movements with player info
-  df <- data[which((data$lastname == lastnameA | data$lastname == lastnameB) & data$event.id == eventID),]
+player_dist <- function(data, lastnameA,lastnameB) {
+  #Functions finds the distance of the player
+  df <- data[which((data$lastname == lastnameA | data$lastname == lastnameB)),]
   dfA <- df %>% filter (lastname==lastnameA) %>% select (x_loc,y_loc)
   dfB <- df %>% filter (lastname==lastnameB) %>% select (x_loc,y_loc)
   df.l <- 1:nrow(dfA)
@@ -100,21 +99,19 @@ player_dist <- function(data, lastnameA,lastnameB, eventID) {
   return(distsdf)
 }
 
-get_game_clock <- function(data, lastnameA,eventID){
-  #Function gets the glame clock, assumes there is a dataframe all.movements with player info
-  alldf <- data[which((data$lastname == lastnameA) & data$event.id == eventID),]
+get_game_clock <- function(data, lastnameA){
+  alldf <- data[which((data$lastname == lastnameA)),]
   game_clock <- alldf$game_clock
   return(as.data.frame(game_clock))
 }
 
-player_dist_matrix <- function(data, eventID) {
+player_dist_matrix <- function(data) {
   #Function creates a matrix of all player/ball distances with each other
-  #assumes there a dataframe all.movements with player info
-  players <- data %>% filter(event.id==eventID) %>% select(lastname) %>% distinct(lastname)
+  players <- data %>% select(lastname) %>% distinct(lastname)
   players2 <- players
   bigdistance <-unlist(lapply(list(players$lastname)[[1]], function(X) {
     lapply(list(players2$lastname)[[1]], function(Y) {test=
-      player_dist(data, X, Y,eventID)
+      player_dist(data, X, Y)
     })
   }), recursive=FALSE)
   bigdistance_names <-unlist(lapply(list(players$lastname)[[1]], function(X) {
@@ -126,7 +123,7 @@ player_dist_matrix <- function(data, eventID) {
   colnames(bigdistancedf) <- bigdistance_names
   bigdistancedf <- bigdistancedf[,colSums(bigdistancedf^2) !=0]
   bigdistancedf <- as.data.frame(bigdistancedf)
-  clockinfo <- get_game_clock(data, "ball",eventID)
+  clockinfo <- get_game_clock(data, "ball")
   bigdistancedf$game_clock <- clockinfo$game_clock
   return (bigdistancedf)
 }

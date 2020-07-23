@@ -6,6 +6,15 @@ library(jsonlite)
 library(dplyr)
 library(sp)
 
+minN <- function(x, N=2){
+  len <- length(x)
+  if(N>len){
+    warning('N greater than length(x).  Setting N=length(x)')
+    N <- length(x)
+  }
+  sort(x,partial=N)[N]
+}
+
 sportvu_convert_json <- function (file.name)
 {
   # Much of the process is from http://tcbanalytics.com/blog/nba-movement-data-R.html#.VnX8d4RiOCQ
@@ -89,18 +98,44 @@ travelDist <- function(xloc, yloc){
   (sum(b))
 }
 
-player_dist <- function(data, lastnameA,lastnameB) {
-  #Functions finds the distance of the player
-  df <- data[which((data$lastname == lastnameA | data$lastname == lastnameB)),]
-  dfA <- df %>% filter (lastname==lastnameA) %>% select (x_loc,y_loc)
-  dfB <- df %>% filter (lastname==lastnameB) %>% select (x_loc,y_loc)
+player_dist <- function(data, lastnameA,lastnameB){
+  # Functions finds the distance of the player
+  df <- data[which(data$lastname == lastnameA | data$lastname == lastnameB),]
+  dfA <- df %>%
+    filter(lastname == lastnameA) %>%
+    select (x_loc, y_loc)
+  dfB <- df %>%
+    filter(lastname == lastnameB) %>%
+    select (x_loc, y_loc)
   df.l <- 1:nrow(dfA)
   distsdf <- unlist(lapply(df.l,function(x) {dist(rbind(dfA[x,], dfB[x,]))}))
   return(distsdf)
 }
 
+
+
+dist_to_ball <- function(data, index){
+  players <- data %>%
+    filter(frame_num == index) %>% 
+    pull(lastname)
+
+  dist_matrix <- data %>%
+    filter(frame_num == index) %>%
+    select(x_loc, y_loc) %>%
+    dist(diag = T, upper = T) %>% 
+    as.matrix() %>% 
+    as.data.frame()
+  
+  colnames(dist_matrix) <- players
+  
+  return(dist_matrix$ball)
+}
+
+
+
+
 get_game_clock <- function(data, lastnameA){
-  alldf <- data[which((data$lastname == lastnameA)),]
+  alldf <- data[which(data$lastname == lastnameA),]
   game_clock <- alldf$game_clock
   return(as.data.frame(game_clock))
 }
@@ -109,13 +144,13 @@ player_dist_matrix <- function(data) {
   #Function creates a matrix of all player/ball distances with each other
   players <- data %>% select(lastname) %>% distinct(lastname)
   players2 <- players
-  bigdistance <-unlist(lapply(list(players$lastname)[[1]], function(X) {
-    lapply(list(players2$lastname)[[1]], function(Y) {test=
+  bigdistance <-unlist(lapply(players$lastname, function(X) {
+    lapply(players2$lastname, function(Y) {
       player_dist(data, X, Y)
     })
   }), recursive=FALSE)
-  bigdistance_names <-unlist(lapply(list(players$lastname)[[1]], function(X) {
-    lapply(list(players2$lastname)[[1]], function(Y) {
+  bigdistance_names <-unlist(lapply(players$lastname, function(X) {
+    lapply(players2$lastname, function(Y) {
       paste(X, Y,sep = "_")
     })
   }), recursive=FALSE)
@@ -127,6 +162,21 @@ player_dist_matrix <- function(data) {
   bigdistancedf$game_clock <- clockinfo$game_clock
   return (bigdistancedf)
 }
+
+one_player_dist_matrix <- function(data, player_name){
+  #Function creates a matrix of all player/ball distances with each other
+  players <- data %>% pull(lastname) %>% unique()
+  
+  dist_matrix <- lapply(players, function(x) player_dist(data, player_name, x)) %>% 
+    as.data.frame()
+  colnames(dist_matrix) <- players
+  #dist_matrix <- dist_matrix[,colSums(dist_matrix^2) != 0]
+  dist_matrix <- dist_matrix %>% 
+    mutate(game_clock = get_game_clock(data, "ball")$game_clock)
+  
+  return (dist_matrix)
+}
+
 
 get_pbp <- function(gameid){
   #Grabs the play by play data from the NBA site

@@ -7,24 +7,6 @@ library(hms)
 source("_functions.R")
 source("fullcourt.R")
 
-moments <- sportvu_convert_json("data/0021500440.json")
-pbp <- read_csv("data/LAC_at_LAL_events.csv") %>% 
-  clean_names()
-
-moments_with_pbp <- moments %>% 
-  left_join(pbp, by = c("event.id" = "eventnum", "quarter" = "period")) %>% 
-  mutate(team = case_when(team_id == 1610612747 ~ "Lakers",
-                          team_id == 1610612746 ~ "Clippers",
-                          is.na(team_id) ~ "ball"),
-         game_clock = hms::as_hms(game_clock),
-         est_time_of_play = hms::as_hms(pctimestring/60)) %>% 
-  select(-matches("\\d")) %>% 
-  select(-pctimestring) %>% 
-  select(homedescription, visitordescription, everything()) %>% 
-  arrange(quarter, event.id, desc(game_clock), desc(shot_clock))
-
-
-
 # Gantt Chart of Moments
 
 gantt_moments <- function(range){
@@ -50,78 +32,131 @@ gantt_moments(1:20)
 
 # Identify time when cameras still roll while the game_clock is stopped
 
-moments_with_pbp %>% 
+gc_stoppages <- moments_with_pbp %>% 
   group_by(quarter, event.id, game_clock) %>% 
-  summarise(n()) %>% 
-  filter(`n()` != 11) %>% 
-  pull(`n()`) %>% 
-  sum()
+  summarise(count = n()) %>% 
+  filter(count != 11) %>% View()
 
-### Identify Passes
+prob_gc_stoppages <- gc_stoppages %>% 
+  filter(count > 22) %>% 
+  pull(game_clock)
 
-ball_distance <- player_dist_matrix(moments, 25) %>%
-  select(starts_with("ball_"))
+sc_stoppages <- moments_with_pbp %>% 
+  group_by(quarter, event.id, shot_clock) %>% 
+  summarise(count = n()) %>% 
+  filter(count != 11)
 
-selected_play <- moments_with_pbp %>% 
-  filter(event.id == 25, lastname == "ball") %>% 
-  mutate(min_ball_dist = apply(ball_distance, 1, min),
-         ball_carrier = apply(ball_distance, 1, which.min))
-
-coords <- selected_play %>% 
-  select(x_loc, y_loc, game_clock) %>% 
-  TrajFromCoords(fps = 25)
-
-traj_data <- coords %>% 
-  mutate(inst_speed = c(NA, TrajDerivatives(coords)[[1]]),
-         inst_acceleration = c(NA, NA, TrajDerivatives(coords)[[3]]),
-         dir_change = c(NA, NA, TrajDirectionalChange(coords)))
+prob_sc_stoppages <- sc_stoppages %>% 
+  filter(count > 22) %>% 
+  pull(shot_clock)
 
 
-nodes <- selected_play %>% 
-  left_join(traj_data, by = c("x_loc" = "x", "y_loc" = "y", "game_clock" = "game_clock")) %>% 
-  unique() %>% 
-  filter(abs(dir_change) > 200 | inst_acceleration > 250) %>% 
-  mutate(next_node_dist = c(sqrt(diff(x_loc)^2 + diff(y_loc)^2), NA))
+### 
 
-# nodes <- nodes %>% 
-#   mutate(next_node_height = unlist(lapply(1:nrow(nodes), function(x) nodes[x+1,]$radius))) %>% 
-#   filter(next_node_dist > 3,
-#          next_node_height< 8)
-  
-nodes <- nodes %>% 
-  mutate(next_node_same_carrier = unlist(
-    lapply(1:nrow(nodes), function(x) nodes[x,]$ball_carrier == nodes[x+1,]$ball_carrier))) %>% 
-  filter(next_node_same_carrier == F,
-         radius < 8,
-         game_clock < 720)
 
 fullcourt() +
-  geom_point(data = selected_play,
-             aes(x_loc, y_loc, color = team)) + 
   geom_point(data = nodes,
              aes(x_loc, y_loc), color = "red") +
   scale_color_manual(values = c("Lakers" = "#fdb927",
                                 "Clippers" = "#1D428A",
-                                "ball" = "#FA8320")) +
+                                "ball" = "#FA8320")) + 
   scale_y_reverse()
+  
+
+nodes %>%
+  filter(shot_clock != 24) %>%
+  group_by(ball_handler) %>% 
+  summarise(num_passes = n()) %>% 
+  View()
+
+shot_df <- shot_df %>% 
+  mutate(quarter = as.numeric(quarter))
+
+home_shot_df <- shot_df[1:77,] %>% 
+  rename(home_desc = shot_description)
+away_shot_df <- shot_df[78:162,] %>% 
+  rename(away_desc = shot_description)
+
+shot_df <- bind_rows(home_shot_df, away_shot_df) %>% 
+  select(home_desc, away_desc, everything())
 
 
 
-####
 
-traj_data %>% 
+
+
+home_time <- pbp %>% 
+  filter(eventmsgtype %in% 1:2,
+         !is.na(homedescription),
+         !str_detect(homedescription, "BLK")) %>% 
+  pull(pctimestring)
+
+away_time <- pbp %>% 
+  filter(eventmsgtype %in% 1:2,
+         !is.na(visitordescription),
+         !str_detect(visitordescription, "BLK")) %>% 
+  pull(pctimestring)
+
+home_shot_df$time <- home_time
+away_shot_df$time <- away_time
+
+pbp <- pbp %>% 
+  left_join(shot_df, by = c("homedescription" = "home_desc",
+                            "visitordescription" = "away_desc",
+                            "period" = "quarter",
+                            "pctimestring" = "time"))
+
+nodes_annotated <- read_csv("nodes.csv") %>% 
+  select(-1)
+
+nodes_annotated$is_pass %>% table()
+
+nodes_annotated %>% 
+  filter(is_pass == F) %>% 
+  group_by(description) %>% 
+  summarise_if(is.numeric, mean) %>% View()
+
+nodes_annotated %>% 
+  group_by(is_pass) %>% 
+  summarise_if(is.numeric, mean) %>% View()
+
+
+nodes_annotated %>% 
+  filter(dir_change > 1500) %>% 
+  group_by(is_pass) %>% 
+  summarise(count = n())
+
+
+nodes_annotated %>% 
+  filter(!(description %in% c("Traffic", "Shot"))) %>%
+  group_by(is_pass) %>% 
+  summarise(count = n())
+
+passes_df <- nodes_annotated %>% 
+  filter(is_pass == T)
+
+fullcourt() +
+  geom_point(data = passes_df, aes(x_loc, y_loc))
+
+passes_df %>% 
+  filter(description != "Inbound" | is.na(description)) %>% 
+  group_by(ball_handler) %>% 
+  summarise(count = n())
+
+all_ball_frames %>% 
+  group_by(ball_handler) %>% 
+  summarise(count = n()) %>% 
   ggplot() +
-  geom_point(aes(game_clock, dir_change)) +
+  geom_bar(aes(reorder(ball_handler, count), count/25), stat = "identity") +
+  coord_flip() +
+  labs(x = "Ball Handler",
+       y = "Seconds of Posession",
+       title = "How much time each player spent as the ball handler",
+       subtitle = "Christmas Day, 2015 - Lakers vs. Clippers") +
   theme_bw()
 
+full_game %>% 
+  filter(frame_num %in% passes_df$frame_num) %>% View()
 
 
-
-traj_data <- coords %>%
-  select(x,y, game_clock) %>% 
-  mutate(inst_disp = c(NA, sqrt(diff(x)^2 + diff(y)^2)),
-         inst_ang_disp = c(NA, NA, (TrajAngles(coords)*180)/pi),
-         ang_disp_per_disp = c(NA, NA, na.omit(inst_ang_disp)/diff(na.omit(inst_disp))),
-         inst_dir = c(NA, diff(y)/diff(x)),
-         inst_dir_change = c(NA, NA, diff(na.omit(inst_dir))/as.numeric(diff(game_clock)[-1])))
 

@@ -1,0 +1,102 @@
+---
+title: "Identifying Passes from SportVU Tracking Data"
+subtitle: A student project from CMSACamp 2020
+authors: Caleb Peña, Raj Dasani, Alex Lagarde, James Hyman
+output: html_document
+---
+
+# Introduction
+The challenge of building models of expected outcomes in NBA data is made more difficult by the lack of publicly available tracking data. When Second Spectrum took over for SportVU in 2017 as the NBA's official tracking partner, movement data that had been accessible through the NBA stats API disappeared. In addition, the play-by-play data that can still be found online lacks precise game-clock information making it difficult to identify the precise camera frames where certain events (passes, shots, turnovers, etc.) occurred. This project combines a heuristic, rule-based approach with Generalized Additive Modelling to identify these frames. We use the Lakers-Clippers Christmas game in 2015 as a case study.
+
+Note: In developing the rules-based side of our algorithm, we are endebted to Justin Jacob's 2018 article *Modeling the Pass* which can be read here: https://squared2020.com/2018/11/29/modeling-the-pass/
+
+Note 2: More detailed code can be found on my (Caleb's) repository here: https://github.com/wilberforce116/NBATrackingData . Of particular interest are the *pre_processing.R*, *EDA.R*, and *get_nodes.R* scripts.
+
+# Data wrangling
+
+```{r load_data, message=F, include=F}
+load("data_and_functions.RData")
+library(tidyverse)
+library(hms)
+library(lubridate)
+```
+
+This project relies on data from two main sources: the SportVU tracking data containing x-, y-, and z- coordinates of each player (and the ball) at each camera frame aw well as play-by-play data provided by ESPN. First, we merged the two sources into a single dataframe called **moments_with_pbp**.
+
+```{r, eval = F}
+moments_with_pbp <- tracking_data %>% 
+  left_join(pbp, by = c("event.id" = "eventnum", "quarter" = "period")) %>% 
+  mutate(team = case_when(team_id == 1610612747 ~ "Lakers",
+                          team_id == 1610612746 ~ "Clippers",
+                          is.na(team_id) ~ "ball"),
+         game_clock = hms::as_hms(game_clock),
+         est_time_of_play = hms::as_hms(pctimestring/60))
+```
+
+
+Since there are 10 players on the court at all times, we would expect to find 11 observations for each unique moment of time. However, since the camera and game clock are both operated by humans, they are not turned off simultaneously.  This leads to some inconsistencies in the data. We solve this problem by removing all frames where the number of observation are not equal to 11.
+
+```{r, eval = F}
+moments_with_pbp <- moments_with_pbp %>% 
+  group_by(quarter, event.id, game_clock) %>% 
+  mutate(count = n()) %>% 
+  ungroup() %>% 
+  filter(count == 11) %>% 
+  arrange(quarter, event.id, desc(game_clock), desc(shot_clock)) 
+```
+
+The play-by-play data in **moments_with_pbp** provides an essential reference for the happenings on the court. But because it is grouped into ESPN's predefined "events" or "moments", there is a great deal of overlap. That is to say, certain camera frames are repeated in multiple events. A shot and the subsequent rebound, for example, will both capture some of the same movement. The Gantt chart below illustrates this phenomenon.
+
+```{r, message=F}
+gantt_moments <- function(range){
+  moments_with_pbp %>% 
+    filter(event.id %in% range) %>% 
+    group_by(event.id) %>% 
+    summarise(start_time = max(game_clock),
+              end_time = min(game_clock)) %>% 
+    ggplot() + 
+    geom_segment(aes(x = start_time, xend = end_time, y = event.id, yend = event.id),
+                 size = 100/length(range)) + 
+    scale_x_reverse(breaks = as.numeric(ms("12:00", "11:00", "10:00", "09:00",
+                                           "08:00", "07:00", "06:00", "05:00",
+                                           "04:00", "03:00", "02:00", "01:00", "00:00"))) +
+    scale_y_reverse() +
+    labs(x = "Game Clock (in seconds remaining)",
+         y = "Moment") +
+    theme_bw()
+}
+
+gantt_moments(1:20)
+```
+
+For this analysis, we created a dataset entitled **full_game** that doesn't feature this duplication. This new dataset should contain continuous gameplay as long as the clock is running.
+
+```{r, eval = F}
+full_game <- moments_with_pbp %>% 
+  select(-contains(c("description", "event", "timestring", "score", "game_id"))) %>% 
+  unique() %>% 
+  arrange(quarter, desc(game_clock), desc(shot_clock))
+```
+
+
+
+
+# Feature extraction *(in progress)*
+
+We created the following variables:
+
+- **frame_num**: an ID variable for each camera frame
+- **dist_to_ball**: the euclidean distance of each player to the ball at each frame
+- **ball_handler**: the player closest to the ball in each frame (approximately)
+- **displacement**: the euclidean distance of each player/ball from one frame to the next
+- **inst_speed**: displacement over time
+- **inst_acceleration**: inst_speed over time
+- **dir_change**: the angular displacement of the ball from one frame to the next
+- **angle_to_basket**: Draw a vector from the ball's position in one frame to its position in the next. Draw another vector from the ball in the initial frame to the basket. This variable reports the angle between them.
+
+
+
+# Modeling *(in progress)*
+
+See model_is_pass.R
+

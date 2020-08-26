@@ -27,6 +27,29 @@ caret::confusionMatrix(nodes_temp$pred_logit, nodes_temp$is_pass)
 
 
 
+# GAM
+
+get_GAM_preds <- function(){
+  nodes_with_fits <- list()
+  for (i in 1:5){
+    GAM_mod <- gam(is_pass ~ s(x_loc) + s(y_loc) + s(radius) + s(displacement) + s(inst_speed) + s(inst_acceleration) + s(dir_change) + ends_near_basket, family = binomial, data = filter(nodes_temp, fold != i))
+    nodes_with_fits[[i]] <- nodes_temp %>% 
+      filter(fold == i) %>% 
+      mutate(prob_logit = predict(GAM_mod, newdata = filter(nodes_temp, fold == i), type = "response"),
+             pred_logit = as.factor(ifelse(prob_logit > 0.6, T, F)))
+  }
+  nodes_with_fits <- bind_rows(nodes_with_fits) %>% 
+    arrange(frame_num)
+  return(nodes_with_fits)
+}
+
+nodes_temp2 <- get_GAM_preds()
+
+caret::confusionMatrix(nodes_temp2$pred_logit, nodes_temp2$is_pass)
+
+
+
+
 
 
 

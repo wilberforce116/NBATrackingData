@@ -146,7 +146,6 @@ get_full_game <- function(tracking, plays){
     select(-event.id) %>% 
     unique() %>%
     arrange(quarter, desc(game_clock), desc(shot_clock)) %>%
-    slice(1:33) %>% 
     mutate(frame_num = rep(1:(nrow(.)/11), each = 11)) %>% 
     mutate(dist_to_ball = unlist(lapply(1:nrow(.), function(x) dist_to_ball(., x)))) %>%
     group_by(frame_num) %>%
